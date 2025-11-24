@@ -34,6 +34,16 @@
   uint
 )
 
+(define-map retired-balances
+  { user: principal, offset-id: uint }
+  uint
+)
+
+(define-map total-retired-by-offset
+  uint
+  uint
+)
+
 (define-map marketplace-listings
   uint
   {
@@ -206,12 +216,22 @@
     (
       (user tx-sender)
       (user-balance (default-to u0 (map-get? user-balances { user: user, offset-id: offset-id })))
+      (current-retired (default-to u0 (map-get? retired-balances { user: user, offset-id: offset-id })))
+      (offset-total-retired (default-to u0 (map-get? total-retired-by-offset offset-id)))
     )
     (asserts! (> quantity u0) ERR-INVALID-AMOUNT)
     (asserts! (>= user-balance quantity) ERR-INSUFFICIENT-FUNDS)
     
     (map-set user-balances { user: user, offset-id: offset-id }
       (- user-balance quantity)
+    )
+    
+    (map-set retired-balances { user: user, offset-id: offset-id }
+      (+ current-retired quantity)
+    )
+    
+    (map-set total-retired-by-offset offset-id
+      (+ offset-total-retired quantity)
     )
     
     (try! (ft-burn? carbon-offset-token quantity user))
@@ -270,6 +290,14 @@
 
 (define-read-only (is-verified-issuer (issuer principal))
   (default-to false (map-get? verified-issuers issuer))
+)
+
+(define-read-only (get-retired-balance (user principal) (offset-id uint))
+  (default-to u0 (map-get? retired-balances { user: user, offset-id: offset-id }))
+)
+
+(define-read-only (get-offset-total-retired (offset-id uint))
+  (default-to u0 (map-get? total-retired-by-offset offset-id))
 )
 
 (define-read-only (get-token-balance (user principal))
