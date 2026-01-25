@@ -307,3 +307,97 @@
 (define-read-only (get-total-supply)
   (ft-get-supply carbon-offset-token)
 )
+
+(define-data-var next-certificate-id uint u1)
+
+(define-map retirement-certificates
+  uint
+  {
+    owner: principal,
+    offset-id: uint,
+    quantity: uint,
+    retired-at-block: uint,
+    beneficiary-name: (string-ascii 50),
+    retirement-reason: (string-ascii 100)
+  }
+)
+
+(define-map user-certificates
+  { user: principal, certificate-id: uint }
+  bool
+)
+
+(define-public (retire-with-certificate
+  (offset-id uint)
+  (quantity uint)
+  (beneficiary-name (string-ascii 50))
+  (retirement-reason (string-ascii 100))
+)
+  (let
+    (
+      (user tx-sender)
+      (certificate-id (var-get next-certificate-id))
+      (user-balance (default-to u0 (map-get? user-balances { user: user, offset-id: offset-id })))
+      (current-retired (default-to u0 (map-get? retired-balances { user: user, offset-id: offset-id })))
+      (offset-total-retired (default-to u0 (map-get? total-retired-by-offset offset-id)))
+      (offset-data (unwrap! (map-get? carbon-offsets offset-id) ERR-NOT-FOUND))
+    )
+    (asserts! (> quantity u0) ERR-INVALID-AMOUNT)
+    (asserts! (>= user-balance quantity) ERR-INSUFFICIENT-FUNDS)
+    
+    (map-set user-balances { user: user, offset-id: offset-id }
+      (- user-balance quantity)
+    )
+    
+    (map-set retired-balances { user: user, offset-id: offset-id }
+      (+ current-retired quantity)
+    )
+    
+    (map-set total-retired-by-offset offset-id
+      (+ offset-total-retired quantity)
+    )
+    
+    (map-set retirement-certificates certificate-id {
+      owner: user,
+      offset-id: offset-id,
+      quantity: quantity,
+      retired-at-block: stacks-block-height,
+      beneficiary-name: beneficiary-name,
+      retirement-reason: retirement-reason
+    })
+    
+    (map-set user-certificates { user: user, certificate-id: certificate-id } true)
+    
+    (var-set next-certificate-id (+ certificate-id u1))
+    
+    (try! (ft-burn? carbon-offset-token quantity user))
+    (ok certificate-id)
+  )
+)
+
+(define-public (transfer-certificate (certificate-id uint) (new-owner principal))
+  (let
+    (
+      (certificate-data (unwrap! (map-get? retirement-certificates certificate-id) ERR-NOT-FOUND))
+      (current-owner (get owner certificate-data))
+    )
+    (asserts! (is-eq tx-sender current-owner) ERR-NOT-AUTHORIZED)
+    
+    (map-set retirement-certificates certificate-id
+      (merge certificate-data { owner: new-owner })
+    )
+    
+    (map-delete user-certificates { user: current-owner, certificate-id: certificate-id })
+    (map-set user-certificates { user: new-owner, certificate-id: certificate-id } true)
+    
+    (ok true)
+  )
+)
+
+(define-read-only (get-certificate (certificate-id uint))
+  (map-get? retirement-certificates certificate-id)
+)
+
+(define-read-only (is-certificate-owner (user principal) (certificate-id uint))
+  (default-to false (map-get? user-certificates { user: user, certificate-id: certificate-id }))
+)
